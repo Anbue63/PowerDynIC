@@ -7,13 +7,10 @@ order model including voltage dynamics according to K. Schmietendorf et. al.
 Machines", 2013.
 The third order model is a special case of the fourth order model with Ed = 0
 and Xd = Xd_dash.
-
 Additionally to u, it has the internal dynamic variable ω representing the
 frequencyof the rotator relative to the grid frequency Ω, i.e. the real
 frequency ωr of the rotator is given as ωr=Ω+ω.
-
 Keyword Arguments
-
 H: inertia constant (given in [s]
 P: active (real) power output, also called the mechanical torque applied to the shaft, given in [pu]
 D: damping coefficient, (given in [s], see P. Sauer, eq. (5.156) where the damping torque is equal Dω)
@@ -29,6 +26,7 @@ using PowerDynamics
 using NetworkDynamics
 import PowerDynamics: dimension, symbolsof, construct_vertex
 import PowerDynamics: AbstractNode
+import PowerDynamics: showdefinition
 import Base: @__doc__
 
 @DynamicNode ThirdOrderEq(H, P, D, Ω, E_f,T_d_dash, X_q_dash, X_d_dash, X_d) begin

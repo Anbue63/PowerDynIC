@@ -1,16 +1,13 @@
 using PowerDynamics
 using ForwardDiff
-using ForwardDiff: Dual
 using Distributions:Uniform
 import PowerDynamics:rhs
 using DifferentialEquations
 using LinearAlgebra
 using DiffEqCallbacks
+include("../PDpatches.jl")
+include("system.jl")
 
-folder = dirname(@__FILE__)
-include(folder*"/../components/ThirdOrderEq.jl")
-include(folder*"/system.jl")
-include(folder*"/../PDpatches.jl")
 
 """
 A method to find random pertubations in the case of systems with algebraic
@@ -21,44 +18,31 @@ This could be applied to Basin Stability Methods in the case of complexer
 Generator Methods which contain algebraic constraints.
 """
 function RandPertWithConstrains(pg::PowerGrid, operationpoint,node, interval)
-    g(θ,i,u) = [1im * i * exp(-1im * θ), 1im * u * exp(-1im * θ)] # Constraints
+    g(φ,i,u) = [1im * i * exp(-1im * φ), 1im * u * exp(-1im * φ)] # Constraints
+    #g(θ,i,u) = [1im * u * exp(-1im * θ)] # Constraints
 
-    # the angle is :φ not :θ
     z = [operationpoint[node,:φ],operationpoint[node,:iabs],operationpoint[node,:v]]
 
-    Jacg_imag = ForwardDiff.jacobian(x -> imag(g(x...)), z)
-    Jacg_real = ForwardDiff.jacobian(x -> real(g(x...)), z)
+    Jacg_imag = ForwardDiff.jacobian(x -> imag(g(x[1],x[2],x[3])), z)
+    Jacg_real = ForwardDiff.jacobian(x -> real(g(x[1],x[2],x[3])), z)
 
     Jacg = Jacg_real + 1im .* Jacg_imag  # I could not find a package which is able to handle complex valued function
 
-    kerJacg = nullspace(Jacg) # kernel of Jacg, returns the extrem points/saddle points
+    #Jacg = grad = ForwardDiff.gradient(x -> real(g(x[1],x[2],x[3])), z) .+ 1im .* ForwardDiff.gradient(x -> imag(g(x[1],x[2],x[3])), z)
+
+    kerJacg = nullspace(Jacg) # kernel of Jacg, returns orthogonal vectors
 
     Pro_kerg = Projvw(z, kerJacg) # Projection of z on ker(∇g(z))
 
-    Frand = rand(Uniform(interval[1],interval[2])) # random pertubation "force"
+    Frand = rand(Uniform(interval[1],interval[2]), length(z)) # random pertubation "force"
 
-    dz = Pro_kerg * Frand # Random Pertubation along the Projection of the Constraind Manifold
-
+    dz = Pro_kerg .* Frand # Random Pertubation along the Projection of the Constraind Manifold
     PerturbedState = copy(operationpoint) # otherwise operationpoint is overwritten
-    # TODO: this fails for me. It seems there's a setindex bug for the State object?
-    #PerturbedState[node, :φ] = abs(dz[1]) # thats not correct but its a quick workaround for now
-    PerturbedState[node, :u] = dz[3] * exp(1im * abs(dz[1]))
+    PerturbedState[node, :θ] = abs(dz[1]) # thats not correct but its a quick workaround for now
+    PerturbedState[node, :u] = dz[3]
 
-    return PerturbedState
+    return PerturbedState,dz
 end
-
-
-PerturbedState = RandPertWithConstrains(powergrid, op, 3, [-100,100])
-
-result = simulate(Perturbation(3,:v,Inc(0)), powergrid, PerturbedState,timespan = 20.0)
-
-ω_idx = findall(:ω .∈ symbolsof.(powergrid.nodes))
-
-θ_idx = findall(:θ .∈ symbolsof.(powergrid.nodes))
-plot(PowerGridSolution(result.dqsol, powergrid), θ_idx, :θ, legend=false)
-plot(PowerGridSolution(result.dqsol, powergrid), ω_idx, :ω, legend=false)
-
-plot(PowerGridSolution(result.dqsol, powergrid), :, :v, legend=false)
 
 """
 Calculates and returns the Projection of a vector w on the vector v.
@@ -71,29 +55,32 @@ function rhs(pg::PowerGrid)
     network_dynamics(map(construct_vertex, pg.nodes), map(construct_edge, pg.lines), pg.graph)
 end
 
-
-
 """
 A method to assures that the conditions given from g stay on the contrained
 manifold. A DifferentialEquations Callback is used.
-This method is not working yet. TODO: I need to find out how PD fetches the equations
-from the Node Makro. I will then use this algorithm to feed in the eqs here.
+This DOES NOT work because of a type missmatch regarding complex numbers
+Inputs:
+    pg: Power grid, a graph containg nodes and lines
+    endtime: Endtime of the simulation
+    u0: current state of the powergrid pg
+Outputs:
+    solution: a PowerGrid solution containg the timeseries and the Powergrid pg
 """
-function SimManifoldCd(pg::PowerGrid, u0::State, node,timespan)
+function SimManifoldCd(pg::PowerGrid, u0::State, endtime)
+    ode = ODEProblem(rhs(pg), u0.vec, (0.0, endtime), nothing)
 
-    ode = ODEProblem(rhs(pg), u0.vec, (0., timespan), nothing)
-
-    function g(resid,sym,p,t)
-        resid[1] = 1im * sym[2] * exp(-1im * sym[3])
-        resid[2] = 1im * sym[3] * exp(-1im * sym[3])
+    function g(resid, x, e_s, e_d, p, t)
+            i = total_current(e_s, e_d) + Y_n * (x[1] + x[2] * im)
+            u = x[1] + x[2] * im
+            θ = x[3]
+            ω = x[4]
+            resid[1] = (1im) * i * exp((-1im) * θ)
+            resid[2] = (1im) * u * exp((-1im) * θ)
     end
     cb = ManifoldProjection(g)
 
 
-    println("RIGHTHANDSIDE:    ",rhs(pg))
-
-
-    sol = solve(ode,Rodas5(),save_everystep=false,callback=cb, abstol=1e-12)
-    dqsol = solve(ode, Rodas5(), reltol=1e-12, abstol=1e-12)
-    return PowerGridSolution(dqsol, powergrid)
+    dqsol = solve(ode,Rodas5(autodiff=false),save_everystep=false,callback=cb)
+    solution = PowerGridSolution(dqsol, pg)
+    return solution
 end

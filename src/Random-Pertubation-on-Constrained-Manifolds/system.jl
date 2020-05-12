@@ -30,7 +30,6 @@ append!(line_list, [StaticLine(from = 1, to = 4, Y = -1im / 0.02)])
 append!(line_list, [StaticLine(from = 2, to = 11, Y = -1im / 0.02)])
 append!(line_list, [StaticLine(from = 2, to = 9, Y = -1im / 0.02)])
 
-
 node_list = []
 append!(node_list, [SlackAlgebraic(U = 1, Y_n = 1)])
 append!(node_list, [PQAlgebraic(S = 0.9, Y_n = 1)])
@@ -46,5 +45,4 @@ append!(node_list, [ThirdOrderEq(H = 3.318, P = 0.6337, D = 0.1, Ω = 50, E_f = 
 
 powergrid = PowerGrid(node_list, line_list)
 
-# not outside function
-#return powergrid
+return powergrid
